@@ -1,0 +1,15 @@
+{
+  "include": ["src/**/*", "index.d.ts"],
+  "compilerOptions": {
+    "declaration": true,
+    "module": "node16",
+    "moduleResolution": "node16",
+    "target": "ES2018",
+    "lib": ["ES2018"],
+    "sourceMap": true,
+    "outDir": "./build",
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true
+  }
+}

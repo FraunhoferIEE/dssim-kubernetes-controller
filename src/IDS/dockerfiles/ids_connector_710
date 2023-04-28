@@ -1,0 +1,6 @@
+FROM busybox:latest as busybox
+
+FROM ghcr.io/international-data-spaces-association/dataspace-connector:7.1.0
+
+COPY --from=busybox /bin/sh /bin/sh
+COPY --from=busybox /bin/cat /bin/cat
