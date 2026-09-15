@@ -39,6 +39,8 @@ import {
 import {CpuUnit, MemoryUnit, waitFor, b64encode} from 'dssim-core';
 import {IncomingMessage} from 'http';
 import stream from 'stream';
+import {PassThrough} from 'stream';
+import {parseContainerId} from './system/containerId.js';
 
 export class KubernetesExecutor {
   private static instance: KubernetesExecutor;
@@ -53,9 +55,13 @@ export class KubernetesExecutor {
     if (!KubernetesExecutor.instance) {
       const kubeConfig = new KubeConfig();
 
-      if (!process.env.K8S_KUBECONFIG_PATH)
-        throw new Error('K8S_KUBECONFIG_PATH Environment Variable not set.');
-      kubeConfig.loadFromFile(process.env.K8S_KUBECONFIG_PATH!);
+      if (process.env.INCLUSTER === '1') {
+        kubeConfig.loadFromCluster();
+      } else {
+        if (!process.env.K8S_KUBECONFIG_PATH)
+          throw new Error('K8S_KUBECONFIG_PATH Environment Variable not set.');
+        kubeConfig.loadFromFile(process.env.K8S_KUBECONFIG_PATH!);
+      }
 
       if (!process.env.K8S_NAMESPACE)
         throw new Error('K8S_NAMESPACE Environment Variable not set.');
@@ -398,17 +404,13 @@ export class KubernetesExecutor {
     );
 
     return info.body.items.map(e => {
-      if (
-        e.spec?.nodeName &&
-        e.status?.containerStatuses &&
-        e.status?.containerStatuses![0].containerID
-      ) {
+      const containerStatus =
+        e.status?.containerStatuses?.find(s => s.ready && s.containerID) ??
+        e.status?.containerStatuses?.find(s => s.containerID);
+      if (e.spec?.nodeName && containerStatus?.containerID) {
         return {
-          nodeName: e.spec!.nodeName!,
-          containerId: e.status!.containerStatuses![0].containerID!.substring(
-            9,
-            21
-          ),
+          nodeName: e.spec.nodeName,
+          containerId: parseContainerId(containerStatus.containerID),
         };
       } else {
         console.error(e.spec);
@@ -448,35 +450,63 @@ export class KubernetesExecutor {
   public exec = async (
     podName: string,
     containerName: string,
-    command: string | string[]
+    command: string | string[],
+    options?: {throwOnFailure?: boolean}
   ): Promise<void> => {
     console.log(`executing '${command}' on ${podName}`);
     const exec = new Exec(this.kubeConfig);
-    const r = await new Promise((resolve, reject) => {
-      try {
-        exec.exec(
-          this.namespace,
-          podName,
-          containerName,
-          command,
-          process.stdout as stream.Writable,
-          process.stderr as stream.Writable,
-          process.stdin as stream.Readable,
-          true,
-          (status: V1Status) => {
-            // tslint:disable-next-line:no-console
-            console.log('Exited with status:');
-            // tslint:disable-next-line:no-console
-            console.log(JSON.stringify(status, null, 2));
-            resolve(status);
-          }
-        );
-      } catch (error) {
-        console.error(error);
-        reject(error);
-      }
+
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    let stdderBuffer = '';
+    let stdoutBuffer = '';
+    stdout.on('data', chunk => {
+      stdoutBuffer += chunk.toString();
     });
-    console.log(r);
+    stderr.on('data', chunk => {
+      stdderBuffer += chunk.toString();
+    });
+    try {
+      const r = await new Promise((resolve, reject) => {
+        exec
+          .exec(
+            this.namespace,
+            podName,
+            containerName,
+            command,
+            stdout,
+            stderr,
+            null,
+            true,
+            (status: V1Status) => {
+              console.log('Exited with status:');
+              console.log(JSON.stringify(status, null, 2));
+              if (options?.throwOnFailure && status.status === 'Failure') {
+                reject(
+                  new Error(
+                    `exec of '${command}' on ${podName} failed: ` +
+                      `${status.message ?? status.reason ?? 'unknown'}` +
+                      (stdderBuffer ? `\n${stdderBuffer}` : '') +
+                      (stdoutBuffer ? `\n${stdoutBuffer}` : '')
+                  )
+                );
+              } else {
+                resolve(status);
+              }
+            }
+          )
+          .catch(reject);
+      });
+      console.log('stdout: ' + (stdoutBuffer || 'no output'));
+      console.log(r);
+    } catch (error) {
+      console.log('stdout: ' + (stdoutBuffer || 'no output'));
+      console.log('stderr: ' + (stdderBuffer || 'no output'));
+      throw error;
+    } finally {
+      stderr.destroy();
+      stdout.destroy();
+    }
     return Promise.resolve();
   };
 

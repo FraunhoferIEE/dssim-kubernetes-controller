@@ -25,25 +25,26 @@ export class EDCInstance extends BaseInstance implements Instance {
   private configMapName: string;
   private keystoreFileName = 'keystore';
 
-  static ControllerEndpoint = {name: 'controller', path: '/api', port: 8181};
-  static IDSEndpoint = {name: 'ids', path: '/api/v1/ids', port: 8282};
-  static DatamanagementEndpoint = {
-    name: 'datamanagement',
-    path: '/api/v1/data',
+  static HealthEndpoint = {name: 'health', path: '/api/check', port: 8080};
+  static ManagementEndpoint = {
+    name: 'management',
+    path: '/api/management',
+    port: 8181,
+  };
+  static ProtocolEndpoint = {name: 'protocol', path: '/api/dsp', port: 8282};
+  static SignalingEndpoint = {
+    name: 'signaling',
+    path: '/api/signaling',
     port: 8383,
   };
+  static ControlEndpoint = {name: 'control', path: '/api/control', port: 9191};
   static PublicEndpoint = {name: 'public', path: '/public', port: 8686};
-  static DataplaneEndpoint = {
-    name: 'dataplane',
-    path: '/dataplane',
-    port: 8484,
-  };
-  static ControlEndpoint = {name: 'control', path: '/control', port: 8585};
+
   static endpoints: Endpoint[] = [
-    EDCInstance.ControllerEndpoint,
-    EDCInstance.IDSEndpoint,
-    EDCInstance.DatamanagementEndpoint,
-    EDCInstance.DataplaneEndpoint,
+    EDCInstance.HealthEndpoint,
+    EDCInstance.ManagementEndpoint,
+    EDCInstance.ProtocolEndpoint,
+    EDCInstance.SignalingEndpoint,
     EDCInstance.ControlEndpoint,
     EDCInstance.PublicEndpoint,
   ];
@@ -87,7 +88,11 @@ export class EDCInstance extends BaseInstance implements Instance {
     );
   }
 
-  public async deployApp(pullSecrets: {[key: string]: string}): Promise<void> {
+  public async deployApp(
+    pullSecrets: {[key: string]: string},
+    nodeSelector?: {[key: string]: string},
+    nodeAffinity?: {[key: string]: string}
+  ): Promise<void> {
     await KubernetesExecutor.getInstance().deployApp(
       this.deploymentName,
       {
@@ -104,6 +109,26 @@ export class EDCInstance extends BaseInstance implements Instance {
             },
           },
           spec: {
+            nodeSelector: nodeSelector,
+            affinity: nodeAffinity
+              ? {
+                  nodeAffinity: {
+                    requiredDuringSchedulingIgnoredDuringExecution: {
+                      nodeSelectorTerms: [
+                        {
+                          matchExpressions: Object.entries(nodeAffinity).map(
+                            ([key, value]) => ({
+                              key,
+                              operator: 'NotIn',
+                              values: [value],
+                            })
+                          ),
+                        },
+                      ],
+                    },
+                  },
+                }
+              : undefined,
             imagePullSecrets: pullSecrets
               ? [
                   {
@@ -181,6 +206,10 @@ export class EDCInstance extends BaseInstance implements Instance {
                     name: 'EDC_KEYSTORE_PASSWORD',
                     value: this.vaultPw,
                   },
+                  {
+                    name: 'EDC_DSP_CALLBACK_ADDRESS',
+                    value: 'http://' + this.deploymentName + ':8282/api/dsp',
+                  },
                 ],
                 volumeMounts: [
                   {
@@ -232,8 +261,6 @@ export class EDCInstance extends BaseInstance implements Instance {
 
     this.endPointUrl = `http://${this.deploymentName}`;
     this.hostname = this.deploymentName;
-    this.healthCheckUrl = `https://${this.deploymentName}${
-      this.endpoints.find(e => e.name === 'datamanagement')?.path
-    }/check/health`;
+    this.healthCheckUrl = `https://${this.deploymentName}/api/check/health`;
   }
 }

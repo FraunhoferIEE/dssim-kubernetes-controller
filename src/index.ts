@@ -35,9 +35,11 @@ import {NetworkControl} from './system/NetworkControl.js';
 export {DSCInstance} from './IDS/DSCInstance.js';
 export {BrokerInstance} from './IDS/BrokerInstance.js';
 export {EDCInstance} from './EDC/EDCInstance.js';
+export {SplitEDCInstance} from './EDC/SplitEDCInstance.js';
 export {DapsInstance} from './IDS/DapsInstance.js';
 
 import {Monitoring} from './Monitoring/Monitoring.js';
+import {parseJSON} from './Utils/ParseJson.js';
 
 export class KubernetesController implements EnvironmentControllerInterface {
   // Private constructor to force the use of factory method and allow async construction
@@ -64,7 +66,14 @@ export class KubernetesController implements EnvironmentControllerInterface {
         loggingPipeline.prometheusUrl
       );
       await monitoring.deploy();
-      logger.addLokiOutput(monitoring.getLokiExternalUrl());
+      const isInCluster =
+        process.env.INCLUSTER?.toLowerCase() === 'true' ||
+        process.env.INCLUSTER === '1';
+      const lokiUrl = isInCluster
+        ? monitoring.getLokiInternalUrl()
+        : monitoring.getLokiExternalUrl();
+      logger.addLokiOutput(lokiUrl);
+      console.log(`Added Loki output to logger with url: ${lokiUrl}`);
     }
 
     if (networkControl) await NetworkControl.deploy();
@@ -107,8 +116,12 @@ export class KubernetesController implements EnvironmentControllerInterface {
     const pullSecrets = await instance.deployPullSecrets();
     await instance.deploySecrets();
     await instance.deployConfigMaps();
-    await instance.deployApp(pullSecrets);
     await instance.deployServices();
+    await instance.deployApp(
+      pullSecrets,
+      parseJSON(process.env.NODE_SELECTOR),
+      parseJSON(process.env.NODE_AFFINITY)
+    );
     await instance.deployIngress();
   }
 

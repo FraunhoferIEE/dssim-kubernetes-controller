@@ -24,7 +24,12 @@ import {
 import {KubernetesExecutor} from '../../KubernetesExecutor.js';
 
 export class Loki {
-  constructor(public deploymentName: string, public readonly port: number) {}
+  constructor(
+    public deploymentName: string,
+    public readonly port: number,
+    private nodeSelector?: {[key: string]: string},
+    private nodeAffinity?: {[key: string]: string}
+  ) {}
 
   deploy = async () => {
     await KubernetesExecutor.getInstance().deployConfigMap(
@@ -34,7 +39,12 @@ export class Loki {
 
     await KubernetesExecutor.getInstance().deployApp(
       this.deploymentName,
-      this.deploymentSpec(this.deploymentName, []),
+      this.deploymentSpec(
+        this.deploymentName,
+        [],
+        this.nodeSelector,
+        this.nodeAffinity
+      ),
       undefined,
       undefined
     );
@@ -119,7 +129,9 @@ export class Loki {
 
   deploymentSpec = (
     deploymentName: string,
-    pullSecrets: V1LocalObjectReference[]
+    pullSecrets: V1LocalObjectReference[],
+    nodeSelector?: {[key: string]: string},
+    nodeAffinity?: {[key: string]: string}
   ): V1DeploymentSpec => {
     return {
       selector: {
@@ -135,6 +147,26 @@ export class Loki {
           },
         },
         spec: {
+          nodeSelector: nodeSelector,
+          affinity: nodeAffinity
+            ? {
+                nodeAffinity: {
+                  requiredDuringSchedulingIgnoredDuringExecution: {
+                    nodeSelectorTerms: [
+                      {
+                        matchExpressions: Object.entries(nodeAffinity).map(
+                          ([key, value]) => ({
+                            key,
+                            operator: 'NotIn',
+                            values: [value],
+                          })
+                        ),
+                      },
+                    ],
+                  },
+                },
+              }
+            : undefined,
           imagePullSecrets: pullSecrets,
           volumes: [
             {

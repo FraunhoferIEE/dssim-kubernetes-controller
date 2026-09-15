@@ -31,7 +31,9 @@ export class Grafana {
   constructor(
     public readonly dashboards: {[key: string]: string},
     private lokiUrl: string,
-    private prometheusUrl: string
+    private prometheusUrl: string,
+    private nodeSelector?: {[key: string]: string},
+    private nodeAffinity?: {[key: string]: string}
   ) {}
 
   dashboardsConfigMapName = 'grafana-dashboards';
@@ -112,7 +114,12 @@ providers:
 
     await KubernetesExecutor.getInstance().deployApp(
       Grafana.DEPLOYMENTNAME,
-      this.deploymentSpec(Grafana.DEPLOYMENTNAME, []),
+      this.deploymentSpec(
+        Grafana.DEPLOYMENTNAME,
+        [],
+        this.nodeSelector,
+        this.nodeAffinity
+      ),
       undefined,
       undefined
     );
@@ -150,7 +157,9 @@ providers:
 
   deploymentSpec = (
     deploymentName: string,
-    pullSecrets: V1LocalObjectReference[]
+    pullSecrets: V1LocalObjectReference[],
+    nodeSelector?: {[key: string]: string},
+    nodeAffinity?: {[key: string]: string}
   ): V1DeploymentSpec => {
     return {
       selector: {
@@ -166,6 +175,26 @@ providers:
           },
         },
         spec: {
+          nodeSelector: nodeSelector,
+          affinity: nodeAffinity
+            ? {
+                nodeAffinity: {
+                  requiredDuringSchedulingIgnoredDuringExecution: {
+                    nodeSelectorTerms: [
+                      {
+                        matchExpressions: Object.entries(nodeAffinity).map(
+                          ([key, value]) => ({
+                            key,
+                            operator: 'NotIn',
+                            values: [value],
+                          })
+                        ),
+                      },
+                    ],
+                  },
+                },
+              }
+            : undefined,
           volumes: [
             {
               configMap: {
